@@ -189,7 +189,7 @@ def main():
     joe_rogan_re = re.compile('Joe .* Rogan', flags=re.I)
 
     # Note that this overwrites previous file
-    with open('joe_rogan.csv', 'w') as f:
+    with open('joe-rogan.csv', 'w') as f:
         writer = csv.writer(f)
         try:
             visited_videos = []
