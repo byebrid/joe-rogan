@@ -191,28 +191,28 @@ def main():
     # The regex used to find comments with those quotes
     joe_rogan_re = re.compile('Joe .* Rogan', flags=re.I)
 
-    # Note that this overwrites previous file
-    with open(OUTPUT_FILE, 'w') as f:
-        writer = csv.writer(f)
-        try:
-            visited_videos = []
-            # JRE Clips youtube channel
-            for video_id in get_videos_from_channel(service=service, channel_id='UCnxGkOGNMqQEUMvroOWps6Q'):
-                # May happen if new uploads while script is running
-                if video_id in visited_videos:
-                    continue
-                
-                logger.info(f'Retrieving comments from video: {video_id}...')
-                for comment in get_comments(service=service, video_id=video_id):
-                    match = joe_rogan_re.match(comment)
-                    if match is not None:
-                        logger.info(f'****{match.group()}')
+    try:
+        visited_videos = []
+        # JRE Clips youtube channel
+        for video_id in get_videos_from_channel(service=service, channel_id='UCnxGkOGNMqQEUMvroOWps6Q'):
+            # May happen if new uploads while script is running
+            if video_id in visited_videos:
+                continue
+            
+            logger.info(f'Retrieving comments from video: {video_id}...')
+            for comment in get_comments(service=service, video_id=video_id):
+                match = joe_rogan_re.match(comment)
+                if match is not None:
+                    logger.info(f'****{match.group()}')
+                    # NOTE: This appends to file, so try to avoid doubling up please
+                    with open(OUTPUT_FILE, 'a') as f:
+                        writer = csv.writer(f)
                         writer.writerow((match.group(),))  
 
-                visited_videos.append(video_id) 
-        except:
-            logger.exception(f'Something unexpectedly went wrong!')
-            raise
+            visited_videos.append(video_id) 
+    except:
+        logger.exception(f'Something unexpectedly went wrong!')
+        raise
     
     logger.info('Succesfully finished main()!')
 
