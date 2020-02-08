@@ -31,8 +31,8 @@ logger.addHandler(filehandler)
 with open('config.json', 'r') as f:
         config = json.load(f)
 
-    API_KEY = config.get("YOUTUBE_API_KEY")
-    service = build(serviceName='youtube', version='v3', developerKey=API_KEY)
+API_KEY = config.get("YOUTUBE_API_KEY")
+service = build(serviceName='youtube', version='v3', developerKey=API_KEY)
 
 
 def get_response(service_call, method, **kwargs):
