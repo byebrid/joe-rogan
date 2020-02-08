@@ -29,11 +29,14 @@ filehandler.setFormatter(formatter)
 logger.addHandler(filehandler)
 
 with open('config.json', 'r') as f:
-        config = json.load(f)
+    config = json.load(f)
 
 API_KEY = config.get("YOUTUBE_API_KEY")
 service = build(serviceName='youtube', version='v3', developerKey=API_KEY)
 
+OUTPUT_FILE = config.get("OUTPUT_FILE", None)
+if OUTPUT_FILE is None:
+    OUTPUT_FILE = 'joe_rogan.csv'
 
 def get_response(service_call, method, **kwargs):
     """Returns response from youtube service and handles API rate limit by 
@@ -189,10 +192,11 @@ def main():
     joe_rogan_re = re.compile('Joe .* Rogan', flags=re.I)
 
     # Note that this overwrites previous file
-    with open('joe-rogan.csv', 'w') as f:
+    with open(OUTPUT_FILE, 'w') as f:
         writer = csv.writer(f)
         try:
             visited_videos = []
+            # JRE Clips youtube channel
             for video_id in get_videos_from_channel(service=service, channel_id='UCnxGkOGNMqQEUMvroOWps6Q'):
                 # May happen if new uploads while script is running
                 if video_id in visited_videos:
