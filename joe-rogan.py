@@ -19,7 +19,7 @@ import logging
 import datetime
 import pytz
 import time
-import csv
+import json
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -36,7 +36,8 @@ service = build(serviceName='youtube', version='v3', developerKey=API_KEY)
 
 OUTPUT_FILE = config.get("OUTPUT_FILE", None)
 if OUTPUT_FILE is None:
-    OUTPUT_FILE = 'joe_rogan.csv'
+    OUTPUT_FILE = 'joe_rogan.json'
+
 
 def get_response(service_call, method, **kwargs):
     """Returns response from youtube service and handles API rate limit by 
@@ -73,7 +74,7 @@ def get_response(service_call, method, **kwargs):
 
         seconds_until_midnight = (midnight - now).seconds + 10 # A little leeway
 
-        logger.info(f'API limit reached! Sleeping ~{seconds_until_midnight} seconds until midnight (pacific time)...')
+        logger.exception('Assuming out of API quota; Sleeping ~{seconds_until_midnight} seconds until midnight (pacific time)...'')
         while True:
             time.sleep(600)
             if datetime.datetime.now(pacific_tz) > midnight:
@@ -91,6 +92,11 @@ def get_response(service_call, method, **kwargs):
 def get_comments(service, video_id):
     """Generator for comments on given youtube video.
     
+    Yields
+    ------
+    comment: str
+        The html of the comment
+
     Parameters
     ----------
     service: youtube service
@@ -100,7 +106,7 @@ def get_comments(service, video_id):
     """
     response = get_response(service.commentThreads(), 'list',
         part='snippet', 
-        textFormat='plainText',
+        textFormat='html',
         videoId=video_id,
         maxResults=100
     )
@@ -125,10 +131,18 @@ def get_comments(service, video_id):
 
 
 def get_videos_from_playlist(service, playlist_id):
-    """Generator of video ids from a given playlist.
-    
+    """Generates videos from a given playlist.
+
     This is used in get_videos_from_channel() to find all videos uploaded by a 
     given channel.
+    
+    Yields 
+    ------
+    {
+        'id': <video's id>, 
+        'title': <video's title>,
+        'thumbnail': <video's maximum resolution thumbnail>
+    }
     
     Parameters
     ----------
@@ -138,16 +152,22 @@ def get_videos_from_playlist(service, playlist_id):
         Can be found in the url of a youtube playlist.
     """
     response = get_response(service.playlistItems(), 'list',
-        part='contentDetails',
+        part='contentDetails,snippet',
         playlistId=playlist_id,
         maxResults=50
     )
 
     while response:
         for item in response['items']:
-            video_id = item['contentDetails']['videoId']
-            yield video_id
-
+            id = item['contentDetails']['videoId']
+            title = item['snippet']['title']
+            thumbnail = item['snippet']['thumbnails']['maxres']
+            yield {
+                'id': id,
+                'title': title,
+                'thumbnail': thumbnail
+            }
+            
         if 'nextPageToken' in response:
             page_token = response['nextPageToken']
 
@@ -162,7 +182,9 @@ def get_videos_from_playlist(service, playlist_id):
 
 
 def get_videos_from_channel(service, channel_id):
-    """Generator of video ids from channel; returns channel's uploaded videos.
+    """Essentially a wrapper (but not really) for get_videos_from_playlist()
+
+    See get_videos_from_playlist() to see return values.
     
     Parameters
     ----------
@@ -180,8 +202,7 @@ def get_videos_from_channel(service, channel_id):
     # Id for playlist of this channel's uploads
     uploads_id = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
 
-    for video_id in get_videos_from_playlist(service=service, playlist_id=uploads_id):
-        yield video_id
+    return get_videos_from_playlist(service=service, playlist_id=uploads_id)
 
 
 def main():
@@ -193,23 +214,51 @@ def main():
 
     try:
         visited_videos = []
+        videos = {}
         # JRE Clips youtube channel
-        for video_id in get_videos_from_channel(service=service, channel_id='UCnxGkOGNMqQEUMvroOWps6Q'):
+        for i, video in enumerate(get_videos_from_channel(service=service, channel_id='UCnxGkOGNMqQEUMvroOWps6Q')):
+            id = video['id']
+            title = video['title']
+            thumbnail = video['thumbnail']
+
             # May happen if new uploads while script is running
-            if video_id in visited_videos:
+            if id in visited_videos:
                 continue
-            
-            logger.info(f'Retrieving comments from video: {video_id}...')
-            for comment in get_comments(service=service, video_id=video_id):
+
+            videos[title] = {
+                'quotes': [],
+                'thumbnail': thumbnail,
+                'id': id
+            }
+
+            logger.info(f'Retrieving comments from video: {id, title}...')
+            for comment in get_comments(service=service, video_id=id):
                 match = joe_rogan_re.match(comment)
                 if match is not None:
-                    logger.info(f'****{match.group()}')
-                    # NOTE: This appends to file, so try to avoid doubling up please
-                    with open(OUTPUT_FILE, 'a') as f:
-                        writer = csv.writer(f)
-                        writer.writerow((match.group(),))  
+                    quote = match.group()
+                    logger.info(f'****{quote}')
+                    videos[title]['quotes'].append(quote)
 
-            visited_videos.append(video_id) 
+            visited_videos.append(id) 
+
+            # Can modify `i` to write to file in larger chunks
+            if i % 50 == 0:
+                # Seeing if file already there
+                try:
+                    with open(OUTPUT_FILE, 'r') as f:
+                        all_videos = json.load(f)
+                except FileNotFoundError:
+                    all_videos = {}
+                    with open(OUTPUT_FILE, 'w') as f:
+                        json.dump(all_videos, f)
+
+                # Updating dict and rewriting to file
+                with open(OUTPUT_FILE, 'w') as f:
+                    all_videos.update(videos)
+                    json.dump(all_videos, f)
+
+                videos = {}
+
     except:
         logger.exception(f'Something unexpectedly went wrong!')
         raise
