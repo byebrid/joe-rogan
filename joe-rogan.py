@@ -74,7 +74,7 @@ def get_response(service_call, method, **kwargs):
 
         seconds_until_midnight = (midnight - now).seconds + 10 # A little leeway
 
-        logger.exception('Assuming out of API quota; Sleeping ~{seconds_until_midnight} seconds until midnight (pacific time)...'')
+        logger.exception('Assuming out of API quota; Sleeping ~{seconds_until_midnight} seconds until midnight (pacific time)...')
         while True:
             time.sleep(600)
             if datetime.datetime.now(pacific_tz) > midnight:
@@ -202,11 +202,29 @@ def get_videos_from_channel(service, channel_id):
     # Id for playlist of this channel's uploads
     uploads_id = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
 
-    return get_videos_from_playlist(service=service, playlist_id=uploads_id)
+    for video in get_videos_from_playlist(service=service, playlist_id=uploads_id):
+        yield video
 
 
 def main():
     """Note that this assumes a global youtube `service` variable for the API."""
+    def write_to_file(videos):
+        """Updates json file new with new ``videos``."""
+        # Seeing if file already there
+        try:
+            with open(OUTPUT_FILE, 'r') as f:
+                all_videos = json.load(f)
+        except FileNotFoundError:
+            all_videos = {}
+            with open(OUTPUT_FILE, 'w') as f:
+                json.dump(all_videos, f)
+
+        # Updating dict and rewriting to file
+        with open(OUTPUT_FILE, 'w') as f:
+            all_videos.update(videos)
+            json.dump(all_videos, f)
+
+
     logger.info('Started main()!')
 
     # The regex used to find comments with those quotes
@@ -243,22 +261,11 @@ def main():
 
             # Can modify `i` to write to file in larger chunks
             if i % 50 == 0:
-                # Seeing if file already there
-                try:
-                    with open(OUTPUT_FILE, 'r') as f:
-                        all_videos = json.load(f)
-                except FileNotFoundError:
-                    all_videos = {}
-                    with open(OUTPUT_FILE, 'w') as f:
-                        json.dump(all_videos, f)
-
-                # Updating dict and rewriting to file
-                with open(OUTPUT_FILE, 'w') as f:
-                    all_videos.update(videos)
-                    json.dump(all_videos, f)
-
+                write_to_file(videos)
                 videos = {}
 
+        # Make sure to write remaining videos to file too
+        write_to_file(videos)
     except:
         logger.exception(f'Something unexpectedly went wrong!')
         raise
