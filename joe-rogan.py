@@ -24,7 +24,7 @@ import json
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 filehandler = logging.FileHandler(__file__ + '.log')
-formatter = logging.Formatter("%(asctime)s:%(name)s:%(levelname)s:%(message)s")
+formatter = logging.Formatter("%(asctime)s:%(name)s:%(levelname)s:%(funcName)s:%(message)s")
 filehandler.setFormatter(formatter)
 logger.addHandler(filehandler)
 
@@ -32,11 +32,9 @@ with open('config.json', 'r') as f:
     config = json.load(f)
 
 API_KEY = config.get("YOUTUBE_API_KEY")
-service = build(serviceName='youtube', version='v3', developerKey=API_KEY)
-
 OUTPUT_FILE = config.get("OUTPUT_FILE", None)
-if OUTPUT_FILE is None:
-    OUTPUT_FILE = 'joe_rogan.json'
+
+service = build(serviceName='youtube', version='v3', developerKey=API_KEY)
 
 
 def get_response(service_call, method, **kwargs):
@@ -61,7 +59,8 @@ def get_response(service_call, method, **kwargs):
     f = getattr(service_call, method)
 
     try:
-        return f(**kwargs).execute()
+        response = f(**kwargs).execute()
+        return response
     except googleapiclient.errors.HttpError:
         # Getting duration of time until midnight (pacific time), which is when
         # API limit resets.
@@ -74,7 +73,7 @@ def get_response(service_call, method, **kwargs):
 
         seconds_until_midnight = (midnight - now).seconds + 10 # A little leeway
 
-        logger.exception('Assuming out of API quota; Sleeping ~{seconds_until_midnight} seconds until midnight (pacific time)...')
+        logger.exception(f'Assuming out of API quota; Sleeping ~{seconds_until_midnight} seconds until midnight (pacific time)...')
         while True:
             time.sleep(600)
             if datetime.datetime.now(pacific_tz) > midnight:
@@ -83,9 +82,10 @@ def get_response(service_call, method, **kwargs):
         logger.info('Done sleeping, attempting to start back up...')
 
         # Try the API call again
-        return f(**kwargs).execute()
+        response = f(**kwargs).execute()
+        return response
     except:
-        logger.exception(f'get_response() failed to succesfully call API.')
+        logger.exception(f'get_response() failed to succesfully call API. with service={service}, method={method}, kwargs={kwargs}')
         raise
 
 
@@ -113,8 +113,14 @@ def get_comments(service, video_id):
 
     while response:
         for item in response['items']:
-            comment = item['snippet']['topLevelComment']['snippet']['textDisplay']
-            yield comment
+            text = item['snippet']['topLevelComment']['snippet']['textDisplay']
+            like_count = item['snippet']['topLevelComment']['snippet']['likeCount']
+            replies = item['snippet']['totalReplyCount']
+            yield {
+                'text': text,
+                'like_count': like_count,
+                'replies': replies
+            }
 
         if 'nextPageToken' in response:
             page_token = response['nextPageToken']
@@ -162,6 +168,7 @@ def get_videos_from_playlist(service, playlist_id):
             id = item['contentDetails']['videoId']
             title = item['snippet']['title']
             thumbnail = item['snippet']['thumbnails']['maxres']
+
             yield {
                 'id': id,
                 'title': title,
@@ -172,7 +179,7 @@ def get_videos_from_playlist(service, playlist_id):
             page_token = response['nextPageToken']
 
             response = get_response(service.playlistItems(), 'list',
-                part='contentDetails',
+                part='contentDetails,snippet',
                 playlistId=playlist_id,
                 maxResults=50,
                 pageToken=page_token
@@ -205,12 +212,11 @@ def get_videos_from_channel(service, channel_id):
     for video in get_videos_from_playlist(service=service, playlist_id=uploads_id):
         yield video
 
-
 def main():
     """Note that this assumes a global youtube `service` variable for the API."""
     def write_to_file(videos):
         """Updates json file new with new ``videos``."""
-        # Seeing if file already there
+        # Getting current dict of videos from file
         try:
             with open(OUTPUT_FILE, 'r') as f:
                 all_videos = json.load(f)
@@ -241,6 +247,7 @@ def main():
 
             # May happen if new uploads while script is running
             if id in visited_videos:
+                logger.info(f'Already seen video {id}')
                 continue
 
             videos[title] = {
@@ -251,16 +258,16 @@ def main():
 
             logger.info(f'Retrieving comments from video: {id, title}...')
             for comment in get_comments(service=service, video_id=id):
-                match = joe_rogan_re.match(comment)
+                match = joe_rogan_re.match(comment['text'])
                 if match is not None:
-                    quote = match.group()
-                    logger.info(f'****{quote}')
-                    videos[title]['quotes'].append(quote)
+                    comment['text'] = match.group()
+                    logger.info(f'****{match.group()}')
+                    videos[title]['quotes'].append(comment)
 
             visited_videos.append(id) 
 
             # Can modify `i` to write to file in larger chunks
-            if i % 50 == 0:
+            if i % 5 == 4:
                 write_to_file(videos)
                 videos = {}
 
